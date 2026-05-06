@@ -1,1 +1,0 @@
-import{_ as e,q as t,v as n,w as r,z as i}from"./render-BeMihE59.js";import{t as a}from"./QPage-Dsmg_nJr.js";var o=r({__name:`DashboardPage`,setup(r){return(r,o)=>(i(),n(a,{class:`flex flex-center`},{default:t(()=>[...o[0]||=[e(`h3`,null,`Ini Halaman Dashboard`,-1)]]),_:1}))}});export{o as default};
