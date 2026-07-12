@@ -1,17 +1,17 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useQuasar } from 'quasar'
 import { pb } from 'boot/pocketbase'
 import { SET_HARI } from 'src/lib/constants'
 import { getJamtemplateLookup, getKelasLookup } from 'src/lib/utils'
-//import {  } from 'src/lib/utils'
+import { handlePBError } from 'src/lib/errorHandler'
 
 const $q = useQuasar()
 
 // State Data Table & UI
 const rows = ref([])
 const loading = ref(false)
-const filter = ref('') // Untuk fitur Search
+const filter = ref('')
 const showForm = ref(false)
 const isEdit = ref(false)
 
@@ -19,13 +19,16 @@ const isEdit = ref(false)
 const jamOptions = ref([])
 const kelasOptions = ref([])
 
+// Master jamsat (durasi, keterangan, & status utama)
+const jamsatMap = ref({}) // { "JPL01": { durasi: 40, nama: "Jam ke 1", utama: "true" }, ... }
+
 // State Pagination & Sorting Server-Side
 const pagination = ref({
   sortBy: 'c_name',
   descending: false,
   page: 1,
   rowsPerPage: 10,
-  rowsNumber: 0, // Akan diisi oleh totalItems dari PocketBase
+  rowsNumber: 0,
 })
 
 // State Form
@@ -33,8 +36,11 @@ const form = ref({
   id: '',
   c_name: '',
   j_hari_id: [],
+  c_jam_str: '',
   j_jampel: [],
+  j_jampel_2: [], // akan diisi otomatis
   j_kelas_id: [],
+  b_aktif: false,
   c_keterangan: '',
 })
 
@@ -45,11 +51,10 @@ const columns = [
   { name: 'no', label: 'NO', align: 'center', field: 'no', style: 'vertical-align: top;' },
   {
     name: 'c_name',
-    label: 'NAMA TEMPLATE',
+    label: 'NAMA',
     align: 'left',
     field: 'c_name',
-    style: 'vertical-align: top;',
-
+    classes: 'kolom-wrap',
     sortable: true,
   },
   {
@@ -57,20 +62,41 @@ const columns = [
     label: 'HARI',
     align: 'left',
     field: 'j_hari_id',
-    style: 'vertical-align: top;',
+    classes: 'kolom-wrap',
+  },
+  {
+    name: 'c_jam_str',
+    label: 'MULAI',
+    align: 'center',
+    field: 'c_jam_str',
+    classes: 'kolom-wrap',
   },
   {
     name: 'j_jampel',
-    label: 'JAM PEL',
+    label: 'JAM KE',
     align: 'left',
     field: 'j_jampel',
     style: 'vertical-align: top;',
   },
   {
+    name: 'j_jampel_2',
+    label: 'JAM PELAJARAN',
+    align: 'left',
+    field: 'j_jampel_2',
+    style: 'vertical-align: top;',
+  },
+  {
     name: 'j_kelas_id',
-    label: 'KELAS',
+    label: 'KELAS PENGGUNA',
     align: 'left',
     field: 'j_kelas_id',
+    style: 'vertical-align: top;',
+  },
+  {
+    name: 'b_aktif',
+    label: 'AKTIF',
+    align: 'center',
+    field: 'b_aktif',
     style: 'vertical-align: top;',
   },
   {
@@ -78,9 +104,16 @@ const columns = [
     label: 'KETERANGAN',
     align: 'left',
     field: 'c_keterangan',
+    classes: 'kolom-wrap',
     sortable: true,
   },
-  { name: 'actions', label: 'AKSI', align: 'center', field: 'actions' },
+  {
+    name: 'actions',
+    label: 'AKSI',
+    align: 'center',
+    field: 'actions',
+    style: 'vertical-align: top;',
+  },
 ]
 
 // ============================================
@@ -100,22 +133,76 @@ const getTampilanJam = (jamArray) => {
   if (!jamArray || !jamArray.length) return '-'
   return jamArray
     .map((j) => {
-      const found = jamOptions.value.find((opt) => opt.id_asli === j)
-      return found ? found.tampilan : j
+      const found = jamOptions.value.find((opt) => opt.value === j)
+      return found ? found.label : j
     })
     .join(', ')
 }
 
-// Fungsi untuk menghapus duplikat berdasarkan id_asli
-const deduplicateOptions = (dataArray) => {
-  if (!Array.isArray(dataArray) || dataArray.length === 0) return []
-  const seen = new Set()
-  return dataArray.filter((item) => {
-    const key = item.id_asli
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
+// Helper manipulasi waktu
+const addMinutesToTime = (timeStr, minutes) => {
+  const [hours, mins] = timeStr.split(':').map(Number)
+  const totalMinutes = hours * 60 + mins + minutes
+  const newHours = Math.floor(totalMinutes / 60) % 24
+  const newMins = totalMinutes % 60
+  return `${String(newHours).padStart(2, '0')}:${String(newMins).padStart(2, '0')}`
+}
+
+// Fungsi utama generate j_jampel_2
+const generateJampelDetail = (jamIds, startTime) => {
+  if (!jamIds || !jamIds.length || !startTime) return []
+  if (!jamsatMap.value || Object.keys(jamsatMap.value).length === 0) return []
+
+  let currentTime = startTime
+  const result = []
+
+  for (const jamId of jamIds) {
+    const jamInfo = jamsatMap.value[jamId]
+    if (!jamInfo) {
+      console.warn(`ID Jam ${jamId} tidak ditemukan di master jamsat`)
+      continue
+    }
+
+    const durasi = jamInfo.durasi
+    const akhir = addMinutesToTime(currentTime, durasi)
+
+    // DIUBAH: Menyisipkan key "utama" bernilai string ("true"/"false") ke dalam struktur elemen
+    result.push({
+      akhir: akhir,
+      durasi: durasi,
+      id: jamId,
+      keterangan: jamInfo.nama,
+      mulai: currentTime,
+      utama: jamInfo.utama,
+    })
+
+    currentTime = akhir // waktu berikutnya
+  }
+  return result
+}
+
+// Load master tb_mst_jamsat
+const loadJamsatData = async () => {
+  try {
+    const records = await pb.collection('tb_mst_jamsat').getFullList({
+      $autoCancel: false,
+    })
+    const map = {}
+    records.forEach((rec) => {
+      map[rec.c_jam_id] = {
+        durasi: Number(rec.n_durasi),
+        nama: rec.c_nama,
+        // DIUBAH: Mengambil b_utama dan mengubahnya ke string "true" atau "false"
+        //utama: rec.b_utama !== undefined ? String(rec.b_utama) : 'false',
+        utama: rec.b_utama !== undefined ? Boolean(rec.b_utama) : false,
+      }
+    })
+    jamsatMap.value = map
+    console.log('✅ Master jamsat loaded:', Object.keys(map).length)
+  } catch (err) {
+    console.error('Gagal load tb_mst_jamsat:', err)
+    $q.notify({ type: 'negative', message: 'Gagal memuat data durasi jam pelajaran.' })
+  }
 }
 
 const loadDropdowns = async () => {
@@ -125,13 +212,11 @@ const loadDropdowns = async () => {
       getKelasLookup(),
     ])
     jamOptions.value = jamtemplateData
-    kelasOptions.value = deduplicateOptions(kelasData) //kelasData
-    //console.log('Cek Data Kelas:', kelasData) // Lihat di Console F12 apakah ada property c_bidang_id
+    kelasOptions.value = kelasData
   } catch (error) {
-    console.error('Gagal memuat opsi jam dropdown:', error)
+    console.error('Gagal memuat opsi dropdown:', error)
   }
 }
-//deduplicateOptions(kelasData)
 
 // ============================================
 // FUNGSI FETCH DATA (DIPANGGIL OLEH Q-TABLE)
@@ -143,31 +228,25 @@ const onRequest = async (props) => {
   loading.value = true
 
   try {
-    // 1. Setup Sorting untuk PocketBase (+ = ASC, - = DESC)
     let sortString = ''
     if (sortBy) {
       sortString = descending ? `-${sortBy}` : `+${sortBy}`
     }
 
-    // 2. Setup Filter/Search
     let filterString = ''
     if (filterValue) {
       filterString = `c_name ~ "${filterValue}" || c_keterangan ~ "${filterValue}"`
     }
 
-    // Hitung limit jika "All" (0) dipilih di table
     const fetchLimit = rowsPerPage === 0 ? 500 : rowsPerPage
 
-    // 3. Ambil data dari PocketBase
     const result = await pb.collection('tb_mst_jampel_template').getList(page, fetchLimit, {
       sort: sortString,
       filter: filterString,
     })
 
-    // 4. Update data tabel
     rows.value = result.items
 
-    // 5. Update state pagination lokal agar UI sinkron
     pagination.value.page = page
     pagination.value.rowsPerPage = rowsPerPage
     pagination.value.sortBy = sortBy
@@ -175,7 +254,7 @@ const onRequest = async (props) => {
     pagination.value.rowsNumber = result.totalItems
   } catch (error) {
     console.error('Gagal mengambil data:', error)
-    $q.notify({ type: 'negative', message: 'Gagal memuat data template jam.' })
+    $q.notify({ type: 'negative', message: 'Gagal memuat data pola jam.' })
   } finally {
     loading.value = false
   }
@@ -186,11 +265,18 @@ const onRequest = async (props) => {
 // ============================================
 const simpanData = async () => {
   try {
+    if (form.value.j_jampel.length && form.value.c_jam_str) {
+      form.value.j_jampel_2 = generateJampelDetail(form.value.j_jampel, form.value.c_jam_str)
+    }
+
     const payload = {
       c_name: form.value.c_name,
       j_hari_id: form.value.j_hari_id,
+      c_jam_str: form.value.c_jam_str,
       j_jampel: form.value.j_jampel,
+      j_jampel_2: form.value.j_jampel_2,
       j_kelas_id: form.value.j_kelas_id,
+      b_aktif: form.value.b_aktif,
       c_keterangan: form.value.c_keterangan,
     }
 
@@ -203,11 +289,14 @@ const simpanData = async () => {
     }
 
     tutupForm()
-    // Refresh tabel (menggunakan state pagination terkini)
     onRequest({ pagination: pagination.value, filter: filter.value })
   } catch (error) {
-    console.error('Gagal menyimpan:', error)
-    $q.notify({ type: 'negative', message: 'Terjadi kesalahan saat menyimpan data.' })
+    console.error('Proses simpan gagal:', error)
+    handlePBError(error, {
+      c_name: {
+        validation_not_unique: `Gagal! Nama Template "${form.value.c_name}" sudah ada.`,
+      },
+    })
   }
 }
 
@@ -239,8 +328,11 @@ const bukaFormTambah = () => {
     id: '',
     c_name: '',
     j_hari_id: [],
+    c_jam_str: '',
     j_jampel: [],
+    j_jampel_2: [],
     j_kelas_id: [],
+    b_aktif: false,
     c_keterangan: '',
   }
   showForm.value = true
@@ -252,30 +344,56 @@ const bukaFormEdit = (item) => {
     id: item.id,
     c_name: item.c_name,
     j_hari_id: Array.isArray(item.j_hari_id) ? item.j_hari_id : [],
+    c_jam_str: item.c_jam_str || '',
     j_jampel: Array.isArray(item.j_jampel) ? item.j_jampel : [],
+    j_jampel_2: [],
     j_kelas_id: Array.isArray(item.j_kelas_id) ? item.j_kelas_id : [],
+    b_aktif: item.b_aktif ?? false,
     c_keterangan: item.c_keterangan || '',
   }
   showForm.value = true
+  if (form.value.j_jampel.length && form.value.c_jam_str) {
+    form.value.j_jampel_2 = generateJampelDetail(form.value.j_jampel, form.value.c_jam_str)
+  }
 }
 
 const tutupForm = () => {
   showForm.value = false
 }
 
-// Lifecycle Hooks
+// ============================================
+// WATCHER: Otomatis generate j_jampel_2
+// ============================================
+watch(
+  () => [form.value.j_jampel, form.value.c_jam_str],
+  ([newJam, newStart]) => {
+    if (
+      newJam &&
+      newJam.length &&
+      newStart &&
+      jamsatMap.value &&
+      Object.keys(jamsatMap.value).length > 0
+    ) {
+      form.value.j_jampel_2 = generateJampelDetail(newJam, newStart)
+    } else {
+      form.value.j_jampel_2 = []
+    }
+  },
+  { deep: true },
+)
+
 onMounted(async () => {
+  await loadJamsatData()
   await loadDropdowns()
-  // Trigger fetch pertama kali dengan memanggil onRequest secara manual
   onRequest({ pagination: pagination.value, filter: filter.value })
 })
 </script>
 
 <template>
-  <q-page class="q-pa-md">
+  <div class="q-pa-sm">
     <q-card v-if="!showForm" flat bordered>
       <q-table
-        title="Data Template Jam Pelajaran"
+        title="Data Pola Jam Pelajaran"
         :rows="rows"
         :columns="columns"
         row-key="id"
@@ -289,16 +407,19 @@ onMounted(async () => {
         binary-state-sort
         no-data-label="Data tidak ditemukan"
         no-results-label="Pencarian tidak ditemukan"
+        class="my-zebra-table"
       >
         <template v-slot:top-right>
           <q-input
-            borderless
-            dense
             debounce="300"
             v-model="filter"
             placeholder="Cari Nama..."
-            class="q-mr-md q-px-sm"
-            style="background: #f1f5f9; border-radius: 4px"
+            label="Cari Nama..."
+            outlined
+            clearable
+            dense
+            style="min-width: 150px; background: white"
+            class="q-mr-sm"
           >
             <template v-slot:append>
               <q-icon name="search" />
@@ -308,7 +429,7 @@ onMounted(async () => {
           <q-btn
             color="primary"
             icon="add"
-            label="Tambah Data"
+            label="Tambah"
             @click="bukaFormTambah"
             class="q-mr-sm"
             unelevated
@@ -325,8 +446,8 @@ onMounted(async () => {
         </template>
 
         <template v-slot:body-cell-no="props">
-          <q-td :props="props">
-            {{ (pagination.page - 1) * pagination.rowsPerPage + props.rowIndex + 1 }}
+          <q-td :props="props" class="text-center">
+            {{ props.rowIndex + 1 }}
           </q-td>
         </template>
 
@@ -335,43 +456,45 @@ onMounted(async () => {
             <div
               v-for="(hari, index) in String(getTampilanHari(props.row.j_hari_id)).split(',')"
               :key="index"
+              class="q-py-xs"
             >
               {{ hari.trim() }}
             </div>
           </q-td>
         </template>
 
-        <!--
-        <template v-slot:body-cell-j_hari_id="props">
+        <template v-slot:body-cell-c_jam_str="props">
           <q-td :props="props">
-            {{ getTampilanHari(props.row.j_hari_id) }}
+            {{ props.row.c_jam_str || '-' }}
           </q-td>
         </template>
-      -->
 
         <template v-slot:body-cell-j_jampel="props">
           <q-td :props="props">
             <div
               v-for="(jam, index) in String(getTampilanJam(props.row.j_jampel)).split(',')"
               :key="index"
+              class="q-py-xs"
             >
               {{ jam.trim() }}
             </div>
           </q-td>
         </template>
 
-        <!--
-        <template v-slot:body-cell-j_jampel="props">
+        <template v-slot:body-cell-j_jampel_2="props">
           <q-td :props="props">
-            {{ getTampilanJam(props.row.j_jampel) }}
+            <div v-for="(item, idx) in props.row.j_jampel_2" :key="idx" class="q-py-xs">
+              {{ item.mulai }} - {{ item.akhir }} ({{ item.durasi }} mnt) : {{ item.id }}
+              <q-badge v-if="item.utama" color="orange" size="xs" label="Utama" class="q-ml-xs" />
+            </div>
           </q-td>
         </template>
-      -->
+
         <template v-slot:body-cell-j_kelas_id="props">
           <q-td :props="props">
             <template v-if="Array.isArray(props.row.j_kelas_id) && props.row.j_kelas_id.length > 0">
               <div v-for="(kId, index) in props.row.j_kelas_id" :key="index" class="q-py-xs">
-                {{ kelasOptions.find((opt) => opt.id_asli === kId)?.tampilan || kId }}
+                {{ kelasOptions.find((opt) => opt.value === kId)?.label || kId }}
               </div>
             </template>
             <template v-else>
@@ -379,25 +502,20 @@ onMounted(async () => {
             </template>
           </q-td>
         </template>
-        <!--
-        <template v-slot:body-cell-j_kelas_id="props">
+
+        <template v-slot:body-cell-b_aktif="props">
           <q-td :props="props">
-            <template v-if="Array.isArray(props.row.j_kelas_id)">
-              {{
-                props.row.j_kelas_id
-                  .map((kId) => {
-                    const found = kelasOptions.find((opt) => opt.id_asli === kId)
-                    return found ? found.tampilan : kId
-                  })
-                  .join(', ') || '-'
-              }}
-            </template>
-            <template v-else>
-              {{ props.row.j_kelas_id || '-' }}
-            </template>
+            <q-chip
+              :color="props.row.b_aktif ? 'positive' : 'negative'"
+              text-color="white"
+              dense
+              icon="check"
+              size="sm"
+            >
+              {{ props.row.b_aktif ? 'Ya' : 'Tdk' }}
+            </q-chip>
           </q-td>
         </template>
-      -->
 
         <template v-slot:body-cell-actions="props">
           <q-td :props="props" class="q-gutter-x-sm">
@@ -430,8 +548,8 @@ onMounted(async () => {
         </div>
       </q-card-section>
 
-      <q-card-section>
-        <q-form @submit.prevent="simpanData" class="q-gutter-md">
+      <q-card-section class="q-pa-sm">
+        <q-form @submit.prevent="simpanData" class="q-gutter-y-md">
           <div class="row q-col-gutter-md">
             <div class="col-12 col-md-6">
               <q-input v-model="form.c_name" label="Nama Template *" outlined dense required />
@@ -454,12 +572,25 @@ onMounted(async () => {
             </div>
 
             <div class="col-12 col-md-6">
+              <q-input
+                v-model="form.c_jam_str"
+                label="Jam Mulai *"
+                outlined
+                dense
+                mask="##:##"
+                fill-mask
+                hint="Format: HH:MM"
+                required
+              />
+            </div>
+
+            <div class="col-12 col-md-6">
               <q-select
                 v-model="form.j_jampel"
                 :options="jamOptions"
-                option-value="id_asli"
-                option-label="tampilan"
-                label="Jam Pelajaran"
+                option-value="value"
+                option-label="label"
+                label="Jam Ke *"
                 emit-value
                 map-options
                 multiple
@@ -467,16 +598,58 @@ onMounted(async () => {
                 clearable
                 outlined
                 dense
+                required
               />
+            </div>
+
+            <div class="col-12 col-md-6">
+              <q-card flat bordered class="bg-grey-1" style="height: 100%">
+                <q-card-section class="q-pa-sm">
+                  <div class="text-subtitle2 q-mb-xs q-px-xs">Preview Detail Jam Pelajaran</div>
+
+                  <div v-if="form.j_jampel_2 && form.j_jampel_2.length" class="overflow-auto">
+                    <q-markup-table flat dense>
+                      <thead class="bg-grey-3">
+                        <tr>
+                          <th class="text-left">Jam Pelajaran</th>
+                          <th class="text-center">Waktu</th>
+                          <th class="text-center">Durasi</th>
+                          <th class="text-center">Utama</th>
+                          <th class="text-left">ID</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="(item, idx) in form.j_jampel_2" :key="idx">
+                          <td class="text-left text-caption">{{ item.keterangan }}</td>
+                          <td class="text-center">{{ item.mulai }} - {{ item.akhir }}</td>
+                          <td class="text-center">{{ item.durasi }}m</td>
+                          <td class="text-center">
+                            <q-icon
+                              :name="item.utama ? 'star' : 'radio_button_unchecked'"
+                              :color="item.utama ? 'orange' : 'grey-4'"
+                            />
+                          </td>
+                          <td class="text-left text-weight-bold">{{ item.id }}</td>
+                        </tr>
+                      </tbody>
+                    </q-markup-table>
+                  </div>
+
+                  <div v-else class="text-grey-6 text-caption q-pa-md text-center">
+                    <q-icon name="info" size="sm" class="q-mr-xs" />
+                    Pilih Jam Pelajaran & Jam Start untuk melihat preview.
+                  </div>
+                </q-card-section>
+              </q-card>
             </div>
 
             <div class="col-12 col-md-6">
               <q-select
                 v-model="form.j_kelas_id"
                 :options="kelasOptions"
-                option-value="id_asli"
-                option-label="tampilan"
-                label="Kelas"
+                option-value="value"
+                option-label="label"
+                label="Kelas Pengguna"
                 emit-value
                 map-options
                 multiple
@@ -484,6 +657,18 @@ onMounted(async () => {
                 outlined
                 dense
                 clearable
+              />
+            </div>
+
+            <div class="col-12 col-md-6">
+              <q-toggle
+                v-model="form.b_aktif"
+                :label="form.b_aktif ? 'Aktif' : 'Nonaktif'"
+                color="green"
+                keep-color
+                icon="check"
+                size="lg"
+                unchecked-icon="clear"
               />
             </div>
 
@@ -511,9 +696,9 @@ onMounted(async () => {
         </q-form>
       </q-card-section>
     </q-card>
-  </q-page>
+  </div>
 </template>
 
 <style scoped>
-/* Hampir tidak ada custom CSS karena Quasar menangani layout, spacing, form, dan table */
+/* CSS scoped tetap */
 </style>

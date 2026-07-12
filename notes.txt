@@ -1,0 +1,37 @@
+- filter tanggal pada Jurnal Guru belum di state pinia
+- field guru pada edit Jurnal Guru harus bisa enabled dan blm lookup guru
+- bisakah jam mulai mengajar dan selesai mengajar dibuat sejajar horizontal
+2026-05-19
+- -ok Perlu revisi Menu penambahan jadwal pada JadwalPage.vue harus diubah berdasarkan c_jam_id 
+- --- Perlu revisi Generate jadwal di JurnalGuruPerKelasPage.vue dari JadwalPage.vue yg ditambahkan manual tidak muncul di JurnalGuruPerKelasPage.vue, karena hanya c_jam_id tunggal yg bisa masuk. (jika dimasukkan c_jam_id sama untuk guru yg agama islam dan non islam) 
+
+2026-05-24
+- Dinamic Menu Ok
+- Perlu koreksi pada authStore.js apakah default role 'Guru'
+    const defaultRoleStr = authData.record.c_default_role || 'Guru' //!perlu koreksi jika nama field default role di tabel users bukan c_default_role
+    activeRole.value = defaultRoleStr
+- Perlu memastikan debug role masing2 user untuk fungsi switchRole
+- Perlu menerapkan activeUserID(c_guru_id/c_murid_id) pada halaman JurnalGuruPerGuruPage.vue, sehingga hanya guru bersangkutan yg bisa melihat data transaksinya
+
+2026-06-07
+update
+- periode pda chard dasboard ok
+- notifikasi pada chart dasboard saat jadwal kelas belum dibuat
+- opsi update jurnal all pada jurnal guru dan kelas ok
+
+2026-06-09
+update ok
+- hari libur pada laporan sudah motong absen/jurnal
+- perlu membuat halaman yang bisa mengetahui jadwal pelajaran perguru dari tb_mst_jadwal, bukan dari jurnal
+
+belum
+- Nama Mapel Perlu ditampilkan di dasboard selain kode mapel
+- pada dropdown pilih guru yg ditampilkan KodeGuru, Mapel, Nama Guru
+
+
+Testing
+- akun guru-murid aktif/non aktif ok 2026-06-10
+
+NAMA: Try Seksa Wharid Hidayat
+NIP: 197408052009031002
+ASAL SEKOLAH: SMPN 1 Palu 

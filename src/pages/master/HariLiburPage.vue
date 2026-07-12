@@ -1,7 +1,8 @@
 <script setup>
 import { ref, onMounted } from 'vue'
-import { useQuasar } from 'quasar'
+import { useQuasar, date } from 'quasar'
 import { pb } from 'boot/pocketbase'
+import { handlePBError } from 'src/lib/errorHandler'
 
 const $q = useQuasar()
 
@@ -14,19 +15,28 @@ const isEdit = ref(false)
 
 // State Pagination & Sorting Server-Side
 const pagination = ref({
-  sortBy: 'c_jam_id',
+  sortBy: 'd_tanggal',
   descending: false,
   page: 1,
   rowsPerPage: 10,
   rowsNumber: 0,
 })
 
+const kolomAktif = ref([
+  'no',
+  //'c_periode',
+  'd_tanggal',
+  'c_keterangan',
+  'b_aktif',
+  'actions',
+])
+
 // State Form
 const form = ref({
   id: '',
-  c_jam_id: '',
-  c_nama: '',
-  n_durasi: 0,
+  c_periode: '',
+  d_tanggal: '',
+  b_aktif: true,
   c_keterangan: '',
 })
 
@@ -35,10 +45,8 @@ const form = ref({
 // ============================================
 const columns = [
   { name: 'no', label: 'NO', align: 'center', field: 'no' },
-  { name: 'c_jam_id', label: 'KODE JAM', align: 'left', field: 'c_jam_id', sortable: true },
-  { name: 'c_nama', label: 'NAMA JAM', align: 'left', field: 'c_nama', sortable: true },
-  { name: 'n_durasi', label: 'DURASI', align: 'center', field: 'n_durasi', sortable: true },
-  { name: 'b_aktif', label: 'AKTIF', align: 'center', field: 'b_aktif', sortable: true },
+  { name: 'c_periode', label: 'PERIODE', align: 'left', field: 'c_periode', sortable: true },
+  { name: 'd_tanggal', label: 'TANGGAL', align: 'center', field: 'd_tanggal', sortable: true },
   {
     name: 'c_keterangan',
     label: 'KETERANGAN',
@@ -46,6 +54,14 @@ const columns = [
     field: 'c_keterangan',
     sortable: true,
   },
+  {
+    name: 'b_aktif',
+    label: 'AKTIF',
+    align: 'center',
+    field: 'b_aktif',
+    sortable: true,
+  },
+
   { name: 'actions', label: 'AKSI', align: 'center', field: 'actions' },
 ]
 
@@ -59,32 +75,27 @@ const onRequest = async (props) => {
   loading.value = true
 
   try {
-    let sortString = ''
-    if (sortBy) {
-      sortString = descending ? `-${sortBy}` : `+${sortBy}`
-    }
-
-    let filterString = ''
-    if (filterValue) {
-      filterString = `c_nama ~ "${filterValue}" || c_jam_id ~ "${filterValue}" || c_keterangan ~ "${filterValue}"`
-    }
+    let sortString = sortBy ? (descending ? `-${sortBy}` : `+${sortBy}`) : ''
+    let filterString = filterValue
+      ? `c_keterangan ~ "${filterValue}" || c_periode ~ "${filterValue}"`
+      : ''
 
     const fetchLimit = rowsPerPage === 0 ? 500 : rowsPerPage
 
-    const result = await pb.collection('tb_mst_jamsat').getList(page, fetchLimit, {
+    const result = await pb.collection('tb_mst_hari_libur').getList(page, fetchLimit, {
       sort: sortString,
       filter: filterString,
     })
 
-    rows.value = result.items
     pagination.value.page = page
     pagination.value.rowsPerPage = rowsPerPage
+    pagination.value.rowsNumber = result.totalItems
     pagination.value.sortBy = sortBy
     pagination.value.descending = descending
-    pagination.value.rowsNumber = result.totalItems
+
+    rows.value = result.items
   } catch (error) {
-    console.error('Gagal mengambil ', error)
-    $q.notify({ type: 'negative', message: 'Gagal memuat data jam pelajaran.' })
+    handlePBError(error)
   } finally {
     loading.value = false
   }
@@ -96,44 +107,54 @@ const onRequest = async (props) => {
 const simpanData = async () => {
   try {
     const payload = {
-      c_jam_id: form.value.c_jam_id,
-      c_nama: form.value.c_nama,
-      n_durasi: Number(form.value.n_durasi),
-      b_aktif: Number(form.value.b_aktif),
+      c_periode: form.value.c_periode,
+      d_tanggal: form.value.d_tanggal,
       c_keterangan: form.value.c_keterangan,
+      b_aktif: form.value.b_aktif,
     }
 
     if (isEdit.value) {
-      await pb.collection('tb_mst_jamsat').update(form.value.id, payload)
-      $q.notify({ type: 'positive', message: 'Data berhasil diupdate!' })
+      await pb.collection('tb_mst_hari_libur').update(form.value.id, payload)
+      $q.notify({
+        type: 'positive',
+        message: 'Data hari libur berhasil diupdate!',
+        position: 'bottom',
+      })
     } else {
-      await pb.collection('tb_mst_jamsat').create(payload)
-      $q.notify({ type: 'positive', message: 'Data berhasil ditambahkan!' })
+      await pb.collection('tb_mst_hari_libur').create(payload)
+      $q.notify({
+        type: 'positive',
+        message: 'Data hari libur berhasil ditambahkan!',
+        position: 'bottom',
+      })
     }
 
     tutupForm()
     onRequest({ pagination: pagination.value, filter: filter.value })
   } catch (error) {
-    console.error('Gagal menyimpan:', error)
-    $q.notify({ type: 'negative', message: 'Terjadi kesalahan saat menyimpan data.' })
+    console.error('Proses simpan gagal:', error)
+    handlePBError(error, {
+      d_tanggal: {
+        validation_not_unique: `Gagal! Tanggal "${form.value.d_tanggal}" sudah terdaftar sebagai hari libur.`,
+      },
+    })
   }
 }
 
-const hapusData = (id, namaJam) => {
+const hapusData = (id, keterangan) => {
   $q.dialog({
-    title: 'Konfirmasi',
-    message: `Yakin ingin menghapus jam pelajaran <strong>${namaJam}</strong>?`,
+    title: 'Konfirmasi Hapus',
+    message: `Yakin ingin menghapus hari libur "<strong>${keterangan}</strong>"?`,
     html: true,
     cancel: true,
     persistent: true,
   }).onOk(async () => {
     try {
-      await pb.collection('tb_mst_jamsat').delete(id)
-      $q.notify({ type: 'positive', message: 'Data berhasil dihapus!' })
+      await pb.collection('tb_mst_hari_libur').delete(id)
+      $q.notify({ type: 'positive', message: 'Data berhasil dihapus!', position: 'bottom' })
       onRequest({ pagination: pagination.value, filter: filter.value })
     } catch (error) {
-      console.error(error)
-      $q.notify({ type: 'negative', message: 'Gagal menghapus data.' })
+      handlePBError(error)
     }
   })
 }
@@ -145,24 +166,24 @@ const bukaFormTambah = () => {
   isEdit.value = false
   form.value = {
     id: '',
-    c_jam_id: '',
-    c_nama: '',
-    n_durasi: 0,
-    b_aktif: 1,
+    c_periode: '',
+    d_tanggal: '',
     c_keterangan: '',
+    b_aktif: true,
   }
   showForm.value = true
 }
 
 const bukaFormEdit = (item) => {
   isEdit.value = true
+  // Format tanggal dari database (Y-m-d H:i:s) menjadi YYYY-MM-DD untuk input date
+  const tanggalFormatted = item.d_tanggal ? item.d_tanggal.split(' ')[0] : ''
   form.value = {
     id: item.id,
-    c_jam_id: item.c_jam_id,
-    c_nama: item.c_nama,
-    n_durasi: item.n_durasi,
-    b_aktif: !!item.b_aktif,
+    c_periode: item.c_periode,
+    d_tanggal: tanggalFormatted,
     c_keterangan: item.c_keterangan || '',
+    b_aktif: item.b_aktif,
   }
   showForm.value = true
 }
@@ -177,13 +198,14 @@ onMounted(() => {
 </script>
 
 <template>
-  <q-page class="q-pa-md">
+  <q-page class="q-pa-sm">
     <q-card v-if="!showForm" flat bordered>
       <q-table
-        title="Data Jam Pelajaran"
+        title="Data Hari Libur"
         :rows="rows"
         :columns="columns"
         row-key="id"
+        :visible-columns="kolomAktif"
         v-model:pagination="pagination"
         :loading="loading"
         :filter="filter"
@@ -192,18 +214,21 @@ onMounted(() => {
         bordered
         separator="cell"
         binary-state-sort
-        no-data-label="Data tidak ditemukan"
+        no-data-label="Tidak ada data hari libur"
         no-results-label="Pencarian tidak ditemukan"
+        class="my-zebra-table"
       >
         <template v-slot:top-right>
           <q-input
-            borderless
-            dense
             debounce="300"
             v-model="filter"
-            placeholder="Cari Nama / Kode..."
-            class="q-mr-md q-px-sm"
-            style="background: #f1f5f9; border-radius: 4px"
+            placeholder="Cari Periode / Keterangan..."
+            label="Cari Periode / Keterangan..."
+            outlined
+            clearable
+            dense
+            style="min-width: 200px; background: white"
+            class="q-mr-sm"
           >
             <template v-slot:append>
               <q-icon name="search" />
@@ -213,7 +238,7 @@ onMounted(() => {
           <q-btn
             color="primary"
             icon="add"
-            label="Tambah Data"
+            label="Tambah"
             @click="bukaFormTambah"
             class="q-mr-sm"
             unelevated
@@ -228,18 +253,35 @@ onMounted(() => {
             <q-tooltip>Refresh Data</q-tooltip>
           </q-btn>
         </template>
-
         <template v-slot:body-cell-no="props">
-          <q-td :props="props">
+          <q-td :props="props" class="text-center">
+            {{ props.rowIndex + 1 }}
+          </q-td>
+        </template>
+        <!--
+        <template v-slot:body-cell-no="props">
+          <q-td :props="props" class="text-center">
             {{ (pagination.page - 1) * pagination.rowsPerPage + props.rowIndex + 1 }}
+          </q-td>
+        </template>
+      -->
+        <template v-slot:body-cell-d_tanggal="props">
+          <q-td :props="props" class="text-center">
+            {{ props.row.d_tanggal ? date.formatDate(props.row.d_tanggal, 'DD/MM/YYYY') : '-' }}
           </q-td>
         </template>
 
         <template v-slot:body-cell-b_aktif="props">
-          <q-td :props="props">
-            <q-badge :color="props.row.b_aktif ? 'positive' : 'negative'">
-              {{ props.row.b_aktif ? 'Aktif' : 'Non-Aktif' }}
-            </q-badge>
+          <q-td :props="props" class="text-center">
+            <q-chip
+              :color="props.row.b_aktif ? 'positive' : 'negative'"
+              text-color="white"
+              dense
+              icon="check"
+              size="sm"
+            >
+              {{ props.row.b_aktif ? 'Ya' : 'Tdk' }}
+            </q-chip>
           </q-td>
         </template>
 
@@ -258,7 +300,7 @@ onMounted(() => {
               dense
               color="negative"
               icon="delete"
-              @click="hapusData(props.row.id, props.row.c_nama)"
+              @click="hapusData(props.row.id, props.row.c_keterangan)"
               title="Hapus"
             />
           </q-td>
@@ -269,51 +311,52 @@ onMounted(() => {
     <q-card v-else flat bordered>
       <q-card-section class="row items-center q-pb-none">
         <q-btn flat round dense icon="arrow_back" @click="tutupForm" class="q-mr-sm" />
-        <div class="text-h6">
-          {{ isEdit ? 'Edit Data Jam Pelajaran' : 'Tambah Data Jam Pelajaran Baru' }}
-        </div>
+        <div class="text-h6">{{ isEdit ? 'Edit Hari Libur' : 'Tambah Hari Libur Baru' }}</div>
       </q-card-section>
 
-      <q-card-section>
-        <q-form @submit.prevent="simpanData" class="q-gutter-md">
+      <q-card-section class="q-pa-sm">
+        <q-form @submit.prevent="simpanData" class="q-gutter-y-md">
           <div class="row q-col-gutter-md">
             <div class="col-12 col-md-6">
-              <q-input v-model="form.c_jam_id" label="Kode Jam *" outlined dense required />
-            </div>
-
-            <div class="col-12 col-md-6">
-              <q-input v-model="form.c_nama" label="Nama Jam *" outlined dense required />
-            </div>
-
-            <div class="col-12 col-md-6">
               <q-input
-                v-model="form.n_durasi"
-                type="number"
-                label="Durasi (Menit)"
+                v-model="form.c_periode"
+                label="Periode (contoh: 2024/2025)"
                 outlined
                 dense
+                required
+                hint="Masukkan kode periode sesuai master periode"
               />
             </div>
-
-            <div class="col-12 col-md-6 flex items-center">
-              <q-toggle
-                v-model="form.b_aktif"
-                label="Status Aktif"
-                color="green"
-                keep-color
-                icon="check"
-                size="lg"
-                unchecked-icon="clear"
-              />
-            </div>
-
-            <!-- <div class="col-12 col-md-6 flex items-center">
-              <q-toggle v-model="form.b_aktif" label="Status Aktif" color="green" />
-            </div> -->
-
             <div class="col-12 col-md-6">
-              <q-input v-model="form.c_keterangan" label="Keterangan" outlined dense />
+              <q-input
+                v-model="form.d_tanggal"
+                label="Tanggal Libur *"
+                type="date"
+                outlined
+                dense
+                required
+              />
             </div>
+            <div class="col-12 col-md-12">
+              <q-input
+                v-model="form.c_keterangan"
+                label="Keterangan (contoh: Libur Nasional, Cuti Bersama, dll) *"
+                outlined
+                dense
+                required
+              />
+            </div>
+          </div>
+          <div class="col-12 col-md-6 flex items-center">
+            <q-toggle
+              v-model="form.b_aktif"
+              label="Status Aktif"
+              color="green"
+              keep-color
+              icon="check"
+              size="lg"
+              unchecked-icon="clear"
+            />
           </div>
 
           <div class="row justify-end q-mt-lg q-gutter-sm">
@@ -332,5 +375,7 @@ onMounted(() => {
 </template>
 
 <style scoped>
-/* Hampir tidak ada custom CSS karena Quasar menangani layout, spacing, form, dan table */
+.my-zebra-table :deep(.q-table tbody tr:nth-child(even)) {
+  background-color: #f5f5f5;
+}
 </style>

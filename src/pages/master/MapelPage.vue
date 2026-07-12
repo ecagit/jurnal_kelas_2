@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useQuasar } from 'quasar'
 import { pb } from 'boot/pocketbase'
+import { handlePBError } from 'src/lib/errorHandler'
 
 const $q = useQuasar()
 
@@ -34,58 +35,86 @@ const form = ref({
 // KONFIGURASI KOLOM Q-TABLE
 // ============================================
 const columns = [
-  { name: 'no', label: 'NOoo', align: 'center', field: 'no' },
-  { name: 'c_mapel_id', label: 'KODE', align: 'left', field: 'c_mapel_id', sortable: true },
+  { name: 'no', label: 'NOoo', align: 'center', field: 'no', style: 'vertical-align: top;' },
+  {
+    name: 'c_mapel_id',
+    label: 'KODE',
+    align: 'left',
+    field: 'c_mapel_id',
+    classes: 'kolom-wrap',
+    sortable: true,
+    style: 'vertical-align: top;',
+  },
   {
     name: 'c_nama_mapel',
     label: 'NAMA MAPEL',
     align: 'left',
     field: 'c_nama_mapel',
+    classes: 'kolom-wrap',
     sortable: true,
+    style: 'vertical-align: top;',
   },
-  { name: 'n_jml_jam', label: 'JAM', align: 'center', field: 'n_jml_jam', sortable: true },
-  { name: 'b_aktif', label: 'AKTIF', align: 'center', field: 'b_aktif', sortable: true },
-  { name: 'actions', label: 'AKSI', align: 'center', field: 'actions' },
+  {
+    name: 'n_jml_jam',
+    label: 'JAM',
+    align: 'center',
+    field: 'n_jml_jam',
+    sortable: true,
+    style: 'vertical-align: top;',
+  },
+  {
+    name: 'b_aktif',
+    label: 'AKTIF',
+    align: 'center',
+    field: 'b_aktif',
+    sortable: true,
+    style: 'vertical-align: top;',
+  },
+  {
+    name: 'actions',
+    label: 'AKSI',
+    align: 'center',
+    field: 'actions',
+    style: 'vertical-align: top;',
+  },
 ]
 
 // ============================================
 // FUNGSI FETCH DATA (DIPANGGIL OLEH Q-TABLE)
 // ============================================
+
 const onRequest = async (props) => {
-  // Ambil state langsung dari parameter request tabel
+  // 1. Dekonstruksi props dari Q-Table
   const { page, rowsPerPage, sortBy, descending } = props.pagination
   const filterValue = props.filter
 
   loading.value = true
 
   try {
-    const sortPrefix = descending ? '-' : '+'
-    const sortQuery = sortBy ? sortPrefix + sortBy : '+c_mapel_id'
-
-    let filterQuery = ''
-    if (filterValue) {
-      filterQuery = `c_nama_mapel ~ "${filterValue}" || c_mapel_id ~ "${filterValue}"`
-    }
+    // 2. Persiapkan parameter untuk PocketBase
+    let sortString = sortBy ? (descending ? `-${sortBy}` : `+${sortBy}`) : ''
+    let filterString = filterValue
+      ? `c_nama_mapel ~ "${filterValue}" || c_mapel_id ~ "${filterValue}"`
+      : ''
 
     const fetchLimit = rowsPerPage === 0 ? 500 : rowsPerPage
 
+    // 3. Ambil data
     const result = await pb.collection('tb_mst_mapel').getList(page, fetchLimit, {
-      sort: sortQuery,
-      filter: filterQuery,
+      sort: sortString,
+      filter: filterString,
     })
 
-    // Update data tabel
-    rows.value = result.items
-
-    // 👇 HANYA UPDATE INI. Biarkan v-model:pagination menangani sisanya
-    pagination.value.rowsNumber = result.totalItems
+    // 4. UPDATE STATE SECARA AMAN (Tanpa mengganti seluruh objek)
     pagination.value.page = page
     pagination.value.rowsPerPage = rowsPerPage
+    pagination.value.rowsNumber = result.totalItems // Update total data untuk pagination footer
     pagination.value.sortBy = sortBy
     pagination.value.descending = descending
+
+    rows.value = result.items
   } catch (error) {
-    console.error('Gagal mengambil data:', error)
-    $q.notify({ type: 'negative', message: 'Gagal memuat data mapel.' })
+    handlePBError(error)
   } finally {
     loading.value = false
   }
@@ -115,8 +144,15 @@ const simpanData = async () => {
     // Refresh tabel (menggunakan state pagination terkini)
     onRequest({ pagination: pagination.value, filter: filter.value })
   } catch (error) {
-    console.error('Gagal menyimpan:', error)
-    $q.notify({ type: 'negative', message: 'Terjadi kesalahan saat menyimpan data.' })
+    console.error('Proses simpan gagal:', error)
+
+    // --- PANGGIL FUNGSI GLOBAL DI SINI ---
+    // Kita berikan custom message khusus untuk c_mapel_id agar bahasanya lebih "manusiawi"
+    handlePBError(error, {
+      c_mapel_id: {
+        validation_not_unique: `Gagal! ID Mata Pelajaran "${form.value.c_mapel_id}" sudah ada di database.`,
+      },
+    })
   }
 }
 
@@ -178,7 +214,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <q-page class="q-pa-md">
+  <q-page class="q-pa-sm">
     <q-card v-if="!showForm" flat bordered>
       <q-table
         title="Data Mata Pelajaran"
@@ -195,16 +231,19 @@ onMounted(() => {
         binary-state-sort
         no-data-label="Data tidak ditemukan"
         no-results-label="Pencarian tidak ditemukan"
+        class="my-zebra-table"
       >
         <template v-slot:top-right>
           <q-input
-            borderless
-            dense
             debounce="300"
             v-model="filter"
             placeholder="Cari Nama / Kode..."
-            class="q-mr-md q-px-sm"
-            style="background: #f1f5f9; border-radius: 4px"
+            label="Cari Nama / Kode..."
+            outlined
+            clearable
+            dense
+            style="min-width: 150px; background: white"
+            class="q-mr-sm"
           >
             <template v-slot:append>
               <q-icon name="search" />
@@ -214,7 +253,7 @@ onMounted(() => {
           <q-btn
             color="primary"
             icon="add"
-            label="Tambah Data"
+            label="Tambah"
             @click="bukaFormTambah"
             class="q-mr-sm"
             unelevated
@@ -229,12 +268,19 @@ onMounted(() => {
             <q-tooltip>Refresh Data</q-tooltip>
           </q-btn>
         </template>
+
+        <template v-slot:body-cell-no="props">
+          <q-td :props="props" class="text-center">
+            {{ props.rowIndex + 1 }}
+          </q-td>
+        </template>
+        <!--
         <template v-slot:body-cell-no="props">
           <q-td :props="props">
             {{ (pagination.page - 1) * pagination.rowsPerPage + props.rowIndex + 1 }}
           </q-td>
         </template>
-
+-->
         <template v-slot:body-cell-b_aktif="props">
           <q-td :props="props">
             <q-badge :color="props.row.b_aktif ? 'positive' : 'negative'">
@@ -274,8 +320,8 @@ onMounted(() => {
         </div>
       </q-card-section>
 
-      <q-card-section>
-        <q-form @submit.prevent="simpanData" class="q-gutter-md">
+      <q-card-section class="q-pa-sm">
+        <q-form @submit.prevent="simpanData" class="q-gutter-y-md">
           <div class="row q-col-gutter-md">
             <div class="col-12 col-md-6">
               <q-input v-model="form.c_mapel_id" label="Kode Mapel *" outlined dense required />

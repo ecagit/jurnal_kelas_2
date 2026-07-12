@@ -2,31 +2,39 @@
 import { ref, onMounted } from 'vue'
 import { useQuasar } from 'quasar'
 import { pb } from 'boot/pocketbase'
-import { getAgamaLookup, getKelasLookup } from 'src/lib/utils'
+//import { getAgamaLookup, getKelasLookup } from 'src/lib/utils'
+import { getAgamaLookup } from 'src/lib/utils'
+import { handlePBError } from 'src/lib/errorHandler'
+import { useAuthStore } from 'stores/authStore'
 
 const $q = useQuasar()
+const auth = useAuthStore()
 
 // State Data Table & UI
 const rows = ref([])
 const loading = ref(false)
-const filter = ref('') // Untuk fitur Search
+const filter = ref('') // untuk pencarian global
 const showForm = ref(false)
 const isEdit = ref(false)
 
-// Options untuk Dropdown
-const agamaOptions = ref([])
-const kelasOptions = ref([])
+// State untuk filter kelas (opsional)
+const filterKelas = ref(null)
+const kelasOptions = ref([]) // semua kelas yang tersedia (untuk form)
+const filteredKelasOptions = ref([]) // untuk dropdown filter (bisa difilter pencarian)
 
-// State Pagination & Sorting Server-Side
+// Options lainnya
+const agamaOptions = ref([])
+
+// Pagination
 const pagination = ref({
   sortBy: 'c_murid_id',
   descending: false,
   page: 1,
   rowsPerPage: 10,
-  rowsNumber: 0, // Akan diisi oleh totalItems dari PocketBase
+  rowsNumber: 0,
 })
 
-// State Form
+// Form
 const form = ref({
   id: '',
   c_murid_id: '',
@@ -38,17 +46,29 @@ const form = ref({
   c_kota: '',
   c_asal_sekolah_sd: '',
   b_pindahan: false,
-  b_aktif: false,
+  b_aktif: true,
   c_kelas_id: '',
 })
 
-// ============================================
-// KONFIGURASI KOLOM Q-TABLE
-// ============================================
+// Konfigurasi kolom tabel
 const columns = [
-  { name: 'no', label: 'NO', align: 'center', field: 'no' },
-  { name: 'c_murid_id', label: 'N I S N', align: 'left', field: 'c_murid_id', sortable: true },
-  { name: 'c_nama', label: 'NAMA', align: 'left', field: 'c_nama', sortable: true },
+  { name: 'no', label: 'NO', align: 'center', field: 'no', style: 'vertical-align: top;' },
+  {
+    name: 'c_murid_id',
+    label: 'N I S N',
+    align: 'left',
+    field: 'c_murid_id',
+    sortable: true,
+    classes: 'kolom-wrap',
+  },
+  {
+    name: 'c_nama',
+    label: 'NAMA',
+    align: 'left',
+    field: 'c_nama',
+    sortable: true,
+    classes: 'kolom-wrap',
+  },
   { name: 'c_jk', label: 'JK', align: 'center', field: 'c_jk', sortable: true },
   { name: 'c_agama', label: 'AGAMA', align: 'left', field: 'c_agama', sortable: true },
   {
@@ -59,13 +79,14 @@ const columns = [
     sortable: true,
     format: (val) => formatTgl(val),
   },
-  { name: 'c_kelas_id', label: 'KELAS', align: 'left', field: 'c_kelas_id' },
+  { name: 'c_kelas_id', label: 'KELAS', align: 'left', field: 'c_kelas_id', classes: 'kolom-wrap' },
   {
     name: 'c_asal_sekolah_sd',
     label: 'ASAL SD',
     align: 'left',
     field: 'c_asal_sekolah_sd',
     sortable: true,
+    classes: 'kolom-wrap',
   },
   { name: 'b_pindahan', label: 'PINDAHAN', align: 'center', field: 'b_pindahan', sortable: true },
   { name: 'b_aktif', label: 'AKTIF', align: 'center', field: 'b_aktif', sortable: true },
@@ -83,70 +104,101 @@ const formatTgl = (dateString) => {
 
 const getTampilanKelas = (idKelas) => {
   if (!idKelas) return '-'
-  const kelas = kelasOptions.value.find((k) => k.id_asli === idKelas)
-  return kelas ? kelas.tampilan : idKelas
+  const kelas = kelasOptions.value.find((k) => k.value === idKelas)
+  return kelas ? kelas.label : idKelas
 }
 
+// Load dropdowns (agama, kelas, dan kelas untuk filter)
 const loadDropdowns = async () => {
   try {
-    const [agamaData, kelasData] = await Promise.all([getAgamaLookup(), getKelasLookup()])
+    // Ambil data agama (dari utils)
+    const agamaData = await getAgamaLookup()
     agamaOptions.value = agamaData
+
+    // Ambil data kelas (dari authStore, sesuai role user)
+    const kelasData = await auth.getKelasLookup()
     kelasOptions.value = kelasData
+    filteredKelasOptions.value = [...kelasData]
+
+    // Jika hanya ada satu kelas, set filter otomatis (opsional)
+    if (kelasData.length === 1) {
+      filterKelas.value = kelasData[0].value
+    }
   } catch (error) {
     console.error('Gagal memuat opsi dropdown:', error)
   }
 }
 
+// Filter fungsi untuk dropdown kelas (pencarian)
+const filterKelasFn = (val, update) => {
+  if (val === '') {
+    update(() => {
+      filteredKelasOptions.value = kelasOptions.value
+    })
+    return
+  }
+  update(() => {
+    const needle = val.toLowerCase()
+    filteredKelasOptions.value = kelasOptions.value.filter(
+      (v) => v.label.toLowerCase().indexOf(needle) > -1,
+    )
+  })
+}
+
 // ============================================
-// FUNGSI FETCH DATA (DIPANGGIL OLEH Q-TABLE)
+// FETCH DATA MURID (dengan filter kelas opsional)
 // ============================================
 const onRequest = async (props) => {
   const { page, rowsPerPage, sortBy, descending } = props.pagination
   const filterValue = props.filter
-
   loading.value = true
 
   try {
-    // 1. Setup Sorting untuk PocketBase (+ = ASC, - = DESC)
-    let sortString = ''
-    if (sortBy) {
-      sortString = descending ? `-${sortBy}` : `+${sortBy}`
-    }
-
-    // 2. Setup Filter/Search (Pencarian NAMA, KODE)
+    let sortString = sortBy ? (descending ? `-${sortBy}` : `+${sortBy}`) : ''
     let filterString = ''
+
+    // Filter pencarian global
     if (filterValue) {
       filterString = `c_nama ~ "${filterValue}" || c_murid_id ~ "${filterValue}"`
     }
 
-    // Hitung limit jika "All" (0) dipilih di table
-    const fetchLimit = rowsPerPage === 0 ? 500 : rowsPerPage
+    // Filter kelas opsional
+    if (filterKelas.value) {
+      const kelasFilter = `c_kelas_id = "${filterKelas.value}"`
+      filterString = filterString ? `(${filterString}) && ${kelasFilter}` : kelasFilter
+    }
 
-    // 3. Ambil data dari PocketBase
+    const fetchLimit = rowsPerPage === 0 ? 500 : rowsPerPage
     const result = await pb.collection('tb_mst_murid').getList(page, fetchLimit, {
       sort: sortString,
       filter: filterString,
     })
 
-    // 4. Update data tabel
     rows.value = result.items
-
-    // 5. Update state pagination lokal agar UI sinkron
-    pagination.value.page = page
-    pagination.value.rowsPerPage = rowsPerPage
-    pagination.value.sortBy = sortBy
-    pagination.value.descending = descending
-    pagination.value.rowsNumber = result.totalItems
+    pagination.value = {
+      ...pagination.value,
+      page,
+      rowsPerPage,
+      rowsNumber: result.totalItems,
+      sortBy,
+      descending,
+    }
   } catch (error) {
-    console.error('Gagal mengambil ', error)
+    console.error('Gagal mengambil data murid:', error)
     $q.notify({ type: 'negative', message: 'Gagal memuat data murid.' })
   } finally {
     loading.value = false
   }
 }
 
+// Event handler ketika filter kelas berubah
+const onFilterKelasChange = () => {
+  pagination.value.page = 1
+  onRequest({ pagination: pagination.value, filter: filter.value })
+}
+
 // ============================================
-// FUNGSI CRUD
+// CRUD OPERATIONS
 // ============================================
 const simpanData = async () => {
   try {
@@ -173,11 +225,14 @@ const simpanData = async () => {
     }
 
     tutupForm()
-    // Refresh tabel (menggunakan state pagination terkini)
     onRequest({ pagination: pagination.value, filter: filter.value })
   } catch (error) {
-    console.error('Gagal menyimpan:', error)
-    $q.notify({ type: 'negative', message: 'Terjadi kesalahan saat menyimpan data.' })
+    console.error('Proses simpan gagal:', error)
+    handlePBError(error, {
+      c_murid_id: {
+        validation_not_unique: `Gagal! ID Murid "${form.value.c_murid_id}" sudah ada di database.`,
+      },
+    })
   }
 }
 
@@ -201,7 +256,7 @@ const hapusData = (id, namaMurid) => {
 }
 
 // ============================================
-// KONTROL FORM
+// FORM CONTROL
 // ============================================
 const bukaFormTambah = () => {
   isEdit.value = false
@@ -229,7 +284,6 @@ const bukaFormEdit = (item) => {
   if (tanggalMentah) {
     tanggalFormatted = tanggalMentah.substring(0, 10)
   }
-
   form.value = {
     id: item.id,
     c_murid_id: item.c_murid_id,
@@ -251,16 +305,19 @@ const tutupForm = () => {
   showForm.value = false
 }
 
-// Lifecycle Hooks
+// Lifecycle
 onMounted(async () => {
   await loadDropdowns()
-  // Trigger fetch pertama kali dengan memanggil onRequest secara manual
   onRequest({ pagination: pagination.value, filter: filter.value })
 })
 </script>
 
+<style scoped>
+/* optional custom styles */
+</style>
+
 <template>
-  <q-page class="q-pa-md">
+  <q-page class="q-pa-sm">
     <q-card v-if="!showForm" flat bordered>
       <q-table
         title="Data Murid"
@@ -277,16 +334,48 @@ onMounted(async () => {
         binary-state-sort
         no-data-label="Data tidak ditemukan"
         no-results-label="Pencarian tidak ditemukan"
+        class="my-zebra-table"
       >
+        <template v-slot:top-left>
+          <div class="row items-center q-gutter-sm">
+            <div class="text-h6 q-mr-md">Data Murid</div>
+            <!-- Filter Kelas (Opsional) berbasis role -->
+            <q-select
+              v-model="filterKelas"
+              :options="filteredKelasOptions"
+              option-label="label"
+              option-value="value"
+              label="Filter Kelas (Opsional)"
+              emit-value
+              map-options
+              outlined
+              clearable
+              dense
+              use-input
+              input-debounce="300"
+              @filter="filterKelasFn"
+              @update:model-value="onFilterKelasChange"
+              style="min-width: 200px; background: #f1f5f9; border-radius: 4px"
+            >
+              <template v-slot:no-option>
+                <q-item><q-item-section class="text-grey">Tidak ada hasil</q-item-section></q-item>
+              </template>
+              <template v-slot:prepend><q-icon name="class" color="primary" /></template>
+            </q-select>
+          </div>
+        </template>
+
         <template v-slot:top-right>
           <q-input
-            borderless
-            dense
             debounce="300"
             v-model="filter"
-            placeholder="Cari Nama / Kode..."
-            class="q-mr-md q-px-sm"
-            style="background: #f1f5f9; border-radius: 4px"
+            placeholder="Cari Nama / NISN..."
+            label="Cari Nama / NISN..."
+            outlined
+            clearable
+            dense
+            style="min-width: 200px; background: white"
+            class="q-mr-sm"
           >
             <template v-slot:append>
               <q-icon name="search" />
@@ -296,7 +385,7 @@ onMounted(async () => {
           <q-btn
             color="primary"
             icon="add"
-            label="Tambah Data"
+            label="Tambah"
             @click="bukaFormTambah"
             class="q-mr-sm"
             unelevated
@@ -313,30 +402,38 @@ onMounted(async () => {
         </template>
 
         <template v-slot:body-cell-no="props">
-          <q-td :props="props">
-            {{ (pagination.page - 1) * pagination.rowsPerPage + props.rowIndex + 1 }}
-          </q-td>
+          <q-td :props="props" class="text-center">{{ props.rowIndex + 1 }}</q-td>
         </template>
 
         <template v-slot:body-cell-c_kelas_id="props">
-          <q-td :props="props">
-            {{ getTampilanKelas(props.row.c_kelas_id) }}
-          </q-td>
+          <q-td :props="props">{{ getTampilanKelas(props.row.c_kelas_id) }}</q-td>
         </template>
 
         <template v-slot:body-cell-b_pindahan="props">
-          <q-td :props="props">
-            <q-badge :color="props.row.b_pindahan ? 'warning' : 'grey'">
+          <q-td :props="props" class="text-center">
+            <q-chip
+              :color="props.row.b_pindahan ? 'positive' : 'negative'"
+              text-color="white"
+              dense
+              icon="check"
+              size="sm"
+            >
               {{ props.row.b_pindahan ? 'Ya' : 'Tidak' }}
-            </q-badge>
+            </q-chip>
           </q-td>
         </template>
 
         <template v-slot:body-cell-b_aktif="props">
-          <q-td :props="props">
-            <q-badge :color="props.row.b_aktif ? 'positive' : 'negative'">
-              {{ props.row.b_aktif ? 'Aktif' : 'Non-Aktif' }}
-            </q-badge>
+          <q-td :props="props" class="text-center">
+            <q-chip
+              :color="props.row.b_aktif ? 'positive' : 'negative'"
+              text-color="white"
+              dense
+              icon="check"
+              size="sm"
+            >
+              {{ props.row.b_aktif ? 'Ya' : 'Tidak' }}
+            </q-chip>
           </q-td>
         </template>
 
@@ -363,14 +460,15 @@ onMounted(async () => {
       </q-table>
     </q-card>
 
+    <!-- Form Tambah/Edit -->
     <q-card v-else flat bordered>
       <q-card-section class="row items-center q-pb-none">
         <q-btn flat round dense icon="arrow_back" @click="tutupForm" class="q-mr-sm" />
         <div class="text-h6">{{ isEdit ? 'Edit Data Murid' : 'Tambah Data Murid Baru' }}</div>
       </q-card-section>
 
-      <q-card-section>
-        <q-form @submit.prevent="simpanData" class="q-gutter-md">
+      <q-card-section class="q-pa-sm">
+        <q-form @submit.prevent="simpanData" class="q-gutter-y-md">
           <div class="row q-col-gutter-md">
             <div class="col-12 col-md-6">
               <q-input v-model="form.c_murid_id" label="N I S N *" outlined dense required />
@@ -412,8 +510,8 @@ onMounted(async () => {
               <q-select
                 v-model="form.c_kelas_id"
                 :options="kelasOptions"
-                option-value="id_asli"
-                option-label="tampilan"
+                option-value="value"
+                option-label="label"
                 label="Kelas"
                 emit-value
                 map-options
@@ -445,9 +543,6 @@ onMounted(async () => {
                   unchecked-icon="clear"
                 />
               </div>
-
-              <!-- <q-toggle v-model="form.b_pindahan" label="Pindahan" color="orange" /> -->
-
               <div class="col-12 col-md-6 flex items-center">
                 <q-toggle
                   v-model="form.b_aktif"
@@ -459,7 +554,6 @@ onMounted(async () => {
                   unchecked-icon="clear"
                 />
               </div>
-              <!-- <q-toggle v-model="form.b_aktif" label="Status Aktif" color="green" /> -->
             </div>
           </div>
 
@@ -477,7 +571,3 @@ onMounted(async () => {
     </q-card>
   </q-page>
 </template>
-
-<style scoped>
-/* Hampir tidak ada custom CSS karena Quasar menangani layout, spacing, form, dan table */
-</style>

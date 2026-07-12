@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useQuasar } from 'quasar'
 import { pb } from 'boot/pocketbase'
-
+import { handlePBError } from 'src/lib/errorHandler'
 const $q = useQuasar()
 
 // State Data Table & UI
@@ -44,7 +44,7 @@ const columns = [
   },
   {
     name: 'c_wali_kelas_id',
-    label: 'WALI KELAS ID',
+    label: 'WALI KLS ID',
     align: 'left',
     field: 'c_wali_kelas_id',
     sortable: true,
@@ -86,8 +86,7 @@ const onRequest = async (props) => {
 
     rows.value = result.items
   } catch (error) {
-    console.error('Gagal mengambil data:', error)
-    $q.notify({ type: 'negative', message: 'Koneksi ke server bermasalah' })
+    handlePBError(error)
   } finally {
     loading.value = false
   }
@@ -106,17 +105,24 @@ const simpanData = async () => {
 
     if (isEdit.value) {
       await pb.collection('tb_mst_kelas').update(form.value.id, payload)
-      $q.notify({ type: 'positive', message: 'Data berhasil diupdate!' })
+      $q.notify({ type: 'positive', message: 'Data berhasil diupdate!', position: 'bottom' })
     } else {
       await pb.collection('tb_mst_kelas').create(payload)
-      $q.notify({ type: 'positive', message: 'Data berhasil ditambahkan!' })
+      $q.notify({ type: 'positive', message: 'Data berhasil ditambahkan!', position: 'bottom' })
     }
 
     tutupForm()
     onRequest({ pagination: pagination.value, filter: filter.value })
   } catch (error) {
-    console.error('Gagal menyimpan:', error)
-    $q.notify({ type: 'negative', message: 'Terjadi kesalahan saat menyimpan data.' })
+    console.error('Proses simpan gagal:', error)
+
+    // --- PANGGIL FUNGSI GLOBAL DI SINI ---
+    // Kita berikan custom message khusus untuk c_kelas_id agar bahasanya lebih "manusiawi"
+    handlePBError(error, {
+      c_kelas_id: {
+        validation_not_unique: `Gagal! ID Kelas "${form.value.c_kelas_id}" sudah ada di database.`,
+      },
+    })
   }
 }
 
@@ -130,11 +136,10 @@ const hapusData = (id, namaKelas) => {
   }).onOk(async () => {
     try {
       await pb.collection('tb_mst_kelas').delete(id)
-      $q.notify({ type: 'positive', message: 'Data berhasil dihapus!' })
+      $q.notify({ type: 'positive', message: 'Data berhasil dihapus!', position: 'bottom' })
       onRequest({ pagination: pagination.value, filter: filter.value })
     } catch (error) {
-      console.error(error)
-      $q.notify({ type: 'negative', message: 'Gagal menghapus data.' })
+      handlePBError(error)
     }
   })
 }
@@ -174,7 +179,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <q-page class="q-pa-md">
+  <q-page class="q-pa-sm">
     <q-card v-if="!showForm" flat bordered>
       <q-table
         title="Data Kelas"
@@ -191,16 +196,19 @@ onMounted(() => {
         binary-state-sort
         no-data-label="Data tidak ditemukan"
         no-results-label="Pencarian tidak ditemukan"
+        class="my-zebra-table"
       >
         <template v-slot:top-right>
           <q-input
-            borderless
-            dense
             debounce="300"
             v-model="filter"
             placeholder="Cari Nama / Kode..."
-            class="q-mr-md q-px-sm"
-            style="background: #f1f5f9; border-radius: 4px"
+            label="Cari Nama / Kode..."
+            outlined
+            clearable
+            dense
+            style="min-width: 150px; background: white"
+            class="q-mr-sm"
           >
             <template v-slot:append>
               <q-icon name="search" />
@@ -210,7 +218,7 @@ onMounted(() => {
           <q-btn
             color="primary"
             icon="add"
-            label="Tambah Data"
+            label="Tambah"
             @click="bukaFormTambah"
             class="q-mr-sm"
             unelevated
@@ -226,12 +234,19 @@ onMounted(() => {
           </q-btn>
         </template>
 
-        <!-- Perbaikan Formula Penomoran -->
+        <template v-slot:body-cell-no="props">
+          <q-td :props="props" class="text-center">
+            {{ props.rowIndex + 1 }}
+          </q-td>
+        </template>
+
+        <!-- Perbaikan Formula Penomoran
         <template v-slot:body-cell-no="props">
           <q-td :props="props" class="text-center">
             {{ (pagination.page - 1) * pagination.rowsPerPage + props.rowIndex + 1 }}
           </q-td>
         </template>
+-->
 
         <template v-slot:body-cell-actions="props">
           <q-td :props="props" class="q-gutter-x-sm">
@@ -243,6 +258,7 @@ onMounted(() => {
               @click="bukaFormEdit(props.row)"
               title="Edit"
             />
+
             <q-btn
               flat
               dense
@@ -262,8 +278,8 @@ onMounted(() => {
         <div class="text-h6">{{ isEdit ? 'Edit Data Kelas' : 'Tambah Data Kelas Baru' }}</div>
       </q-card-section>
 
-      <q-card-section>
-        <q-form @submit.prevent="simpanData" class="q-gutter-md">
+      <q-card-section class="q-pa-sm">
+        <q-form @submit.prevent="simpanData" class="q-gutter-y-md">
           <div class="row q-col-gutter-md">
             <div class="col-12 col-md-6">
               <q-input v-model="form.c_kelas_id" label="Kode Kelas *" outlined dense required />

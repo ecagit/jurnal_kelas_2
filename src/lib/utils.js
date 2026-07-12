@@ -1,3 +1,4 @@
+//import { laBell } from '@quasar/extras/line-awesome'
 import { pb } from 'boot/pocketbase'
 
 // src/lib/utils.js
@@ -10,11 +11,11 @@ export const getAgamaLookup = async () => {
     const records = await pb.collection('tb_mst_agama').getFullList({
       sort: 'c_agama',
     })
-    return records.map((a) => a.c_agama)
+    return records.map((item) => item.c_agama)
     // Kembalikan data yang sudah dipetakan (mapped)
-    //return records.map(a => ({
-    //    id_asli: a.c_agama,      // Nilai yang akan disimpan (misal: "A01")
-    //    label: a.c_nama_agama    // Nilai yang akan muncul di dropdown (misal: "Islam")
+    //return records.map(item => ({
+    //    id_asli: item.c_agama,      // Nilai yang akan disimpan (misal: "A01")
+    //    label: item.c_nama_agama    // Nilai yang akan muncul di dropdown (misal: "Islam")
     //    }))
   } catch (e) {
     console.error('Gagal memuat lookup agama:', e.message)
@@ -30,13 +31,30 @@ export const getKelasLookup = async () => {
     })
 
     // Kembalikan data yang sudah dipetakan (mapped)
-    return records.map((k) => ({
-      id_asli: k.c_kelas_id,
-      tampilan: `${k.c_nama_kelas} (${k.c_kelas_id})`,
-      //tampilan: `${k.c_nama_kelas}`
+    return records.map((item) => ({
+      value: item.c_kelas_id,
+      label: `${item.c_nama_kelas} (${item.c_kelas_id})`,
+      //label: `${item.c_nama_kelas}`
     }))
   } catch (e) {
     console.error('Gagal memuat lookup kelas:', e.message)
+    return [] // Kembalikan array kosong jika error agar tidak crash
+  }
+}
+
+export const getGuruLookup = async () => {
+  try {
+    const records = await pb.collection('tb_mst_guru').getFullList({
+      sort: 'c_nama',
+    })
+
+    // Kembalikan data yang sudah dipetakan (mapped)
+    return records.map((item) => ({
+      value: item.c_guru_id,
+      label: `${item.c_nama} (${item.c_guru_id})`,
+    }))
+  } catch (e) {
+    console.error('Gagal memuat lookup guru:', e.message)
     return [] // Kembalikan array kosong jika error agar tidak crash
   }
 }
@@ -48,10 +66,9 @@ export const getMapelLookup = async () => {
     })
 
     // Kembalikan data yang sudah dipetakan (mapped)
-    return records.map((k) => ({
-      id_asli: k.c_mapel_id,
-      tampilan: `${k.c_nama_mapel} (${k.c_mapel_id})`,
-      //tampilan: `${k.c_nama_mapel}`
+    return records.map((item) => ({
+      value: item.c_mapel_id,
+      label: `${item.c_nama_mapel} (${item.c_mapel_id})`,
     }))
   } catch (e) {
     console.error('Gagal memuat lookup mapel:', e.message)
@@ -65,9 +82,9 @@ export const getJamtemplateLookup = async () => {
       sort: 'c_jam_id',
       filter: 'b_aktif = true',
     })
-    return records.map((r) => ({
-      id_asli: r.c_jam_id,
-      tampilan: r.c_nama,
+    return records.map((item) => ({
+      value: item.c_jam_id,
+      label: item.c_nama,
     }))
   } catch (error) {
     console.error('Gagal memuat lookup jam:', error)
@@ -83,9 +100,9 @@ export const getBidangLookup = async () => {
         });
 
         // Kembalikan data yang sudah dipetakan (mapped)
-        return records.map(b => ({
-            id_asli: b.c_bidang_id,
-            tampilan: `${b.c_bidang_id} - ${b.c_bidang}`
+        return records.map((item) => ({
+            id_asli: item.c_bidang_id,
+            tampilan: `${item.c_bidang_id} - ${item.c_bidang}`
         }));
     } catch (e) {
         console.error("Gagal memuat lookup bidang:", e.message);

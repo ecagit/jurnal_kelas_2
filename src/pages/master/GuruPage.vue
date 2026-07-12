@@ -2,8 +2,8 @@
 import { ref, onMounted } from 'vue'
 import { useQuasar } from 'quasar'
 import { pb } from 'boot/pocketbase' // Menggunakan jalur import budaya Quasar
-//import { getAgamaLookup, getMapelLookup } from '@/lib/utils'
 import { getAgamaLookup, getMapelLookup } from 'src/lib/utils'
+import { handlePBError } from 'src/lib/errorHandler'
 
 const $q = useQuasar()
 
@@ -46,12 +46,48 @@ const form = ref({
 // KONFIGURASI KOLOM Q-TABLE
 // ============================================
 const columns = [
-  { name: 'no', label: 'NO', align: 'center', field: 'no' },
-  { name: 'c_guru_id', label: 'KODE', align: 'left', field: 'c_guru_id', sortable: true },
-  { name: 'c_nip', label: 'NIP', align: 'left', field: 'c_nip', sortable: true },
-  { name: 'c_nama', label: 'NAMA', align: 'left', field: 'c_nama', sortable: true },
-  { name: 'c_jk', label: 'JK', align: 'center', field: 'c_jk', sortable: true },
-  { name: 'c_agama', label: 'AGAMA', align: 'left', field: 'c_agama', sortable: true },
+  { name: 'no', label: 'NO', align: 'center', field: 'no', style: 'vertical-align: top;' },
+  {
+    name: 'c_guru_id',
+    label: 'KODE',
+    align: 'left',
+    field: 'c_guru_id',
+    classes: 'kolom-wrap',
+    sortable: true,
+    style: 'vertical-align: top;',
+  },
+  {
+    name: 'c_nip',
+    label: 'NIP',
+    align: 'left',
+    field: 'c_nip',
+    classes: 'kolom-wrap',
+    sortable: true,
+  },
+  {
+    name: 'c_nama',
+    label: 'NAMA',
+    align: 'left',
+    field: 'c_nama',
+    classes: 'kolom-wrap',
+    sortable: true,
+  },
+  {
+    name: 'c_jk',
+    label: 'JK',
+    align: 'center',
+    field: 'c_jk',
+    sortable: true,
+    style: 'vertical-align: top;',
+  },
+  {
+    name: 'c_agama',
+    label: 'AGAMA',
+    align: 'left',
+    field: 'c_agama',
+    sortable: true,
+    style: 'vertical-align: top;',
+  },
   {
     name: 'd_tgl_lahir',
     label: 'TGL.LAHIR',
@@ -59,12 +95,47 @@ const columns = [
     field: 'd_tgl_lahir',
     sortable: true,
     format: (val) => formatTgl(val),
+    style: 'vertical-align: top;',
   },
-  { name: 'j_mapel_id', label: 'MAPEL', align: 'left', field: 'j_mapel_id' },
-  { name: 'c_alamat', label: 'ALAMAT', align: 'left', field: 'c_alamat', sortable: true },
-  { name: 'c_kota', label: 'KOTA', align: 'left', field: 'c_kota', sortable: true },
-  { name: 'b_aktif', label: 'AKTIF', align: 'center', field: 'b_aktif', sortable: true },
-  { name: 'actions', label: 'AKSI', align: 'center', field: 'actions' },
+  {
+    name: 'j_mapel_id',
+    label: 'MAPEL',
+    align: 'left',
+    field: 'j_mapel_id',
+    style: 'vertical-align: top;',
+  },
+  {
+    name: 'c_alamat',
+    label: 'ALAMAT',
+    align: 'left',
+    field: 'c_alamat',
+    classes: 'kolom-wrap',
+    sortable: true,
+    style: 'vertical-align: top;',
+  },
+  {
+    name: 'c_kota',
+    label: 'KOTA',
+    align: 'left',
+    field: 'c_kota',
+    sortable: true,
+    style: 'vertical-align: top;',
+  },
+  {
+    name: 'b_aktif',
+    label: 'AKTIF',
+    align: 'center',
+    field: 'b_aktif',
+    sortable: true,
+    style: 'vertical-align: top;',
+  },
+  {
+    name: 'actions',
+    label: 'AKSI',
+    align: 'center',
+    field: 'actions',
+    style: 'vertical-align: top;',
+  },
 ]
 
 // ============================================
@@ -174,8 +245,18 @@ const simpanData = async () => {
     // Refresh tabel (menggunakan state pagination terkini)
     onRequest({ pagination: pagination.value, filter: filter.value })
   } catch (error) {
-    console.error('Gagal menyimpan:', error)
-    $q.notify({ type: 'negative', message: 'Terjadi kesalahan saat menyimpan data.' })
+    console.error('Proses simpan gagal:', error)
+
+    // --- PANGGIL FUNGSI GLOBAL DI SINI ---
+    // Kita berikan custom message khusus untuk c_guru_id agar bahasanya lebih "manusiawi"
+    handlePBError(error, {
+      c_guru_id: {
+        validation_not_unique: `Gagal! ID Guru "${form.value.c_guru_id}" sudah ada di database.`,
+      },
+      c_nip: {
+        validation_not_unique: `Gagal! NIP "${form.value.c_nip}" sudah ada di database.`,
+      },
+    })
   }
 }
 
@@ -257,7 +338,7 @@ onMounted(async () => {
 
 <template>
   <!-- <q-page padding> -->
-  <q-page class="q-pa-md">
+  <q-page class="q-pa-sm">
     <q-card v-if="!showForm" flat bordered>
       <q-table
         title="Data Guru"
@@ -274,16 +355,19 @@ onMounted(async () => {
         binary-state-sort
         no-data-label="Data tidak ditemukan"
         no-results-label="Pencarian tidak ditemukan"
+        class="my-zebra-table"
       >
         <template v-slot:top-right>
           <q-input
-            borderless
-            dense
             debounce="300"
             v-model="filter"
             placeholder="Cari Nama / NIP..."
-            class="q-mr-md q-px-sm"
-            style="background: #f1f5f9; border-radius: 4px"
+            label="Cari Nama / NIP..."
+            outlined
+            clearable
+            dense
+            style="min-width: 150px; background: white"
+            class="q-mr-sm"
           >
             <template v-slot:append>
               <q-icon name="search" />
@@ -293,12 +377,19 @@ onMounted(async () => {
           <q-btn
             color="primary"
             icon="add"
-            label="Tambah Data"
+            label="Tambah"
             @click="bukaFormTambah"
             class="q-mr-sm"
             unelevated
           />
-          <q-btn round color="teal" icon="refresh" @click="fetchData" unelevated>
+
+          <q-btn
+            round
+            color="teal"
+            icon="refresh"
+            @click="onRequest({ pagination, filter })"
+            unelevated
+          >
             <q-tooltip>Refresh Data</q-tooltip>
           </q-btn>
 
@@ -315,11 +406,18 @@ onMounted(async () => {
         </template>
 
         <template v-slot:body-cell-no="props">
+          <q-td :props="props" class="text-center">
+            {{ props.rowIndex + 1 }}
+          </q-td>
+        </template>
+
+        <!--
+        <template v-slot:body-cell-no="props">
           <q-td :props="props">
             {{ (pagination.page - 1) * pagination.rowsPerPage + props.rowIndex + 1 }}
           </q-td>
         </template>
-
+        -->
         <template v-slot:body-cell-j_mapel_id="props">
           <q-td :props="props">
             {{ getTampilanMapel(props.row.j_mapel_id) }}
@@ -327,13 +425,28 @@ onMounted(async () => {
         </template>
 
         <template v-slot:body-cell-b_aktif="props">
-          <q-td :props="props">
-            <q-badge :color="props.row.b_aktif ? 'positive' : 'negative'">
-              {{ props.row.b_aktif ? 'Aktif' : 'Non-Aktif' }}
-            </q-badge>
+          <q-td :props="props" class="text-center">
+            <q-chip
+              :color="props.row.b_aktif ? 'positive' : 'negative'"
+              text-color="white"
+              dense
+              icon="check"
+              size="sm"
+            >
+              {{ props.row.b_aktif ? 'Ya' : 'Tidak' }}
+            </q-chip>
           </q-td>
         </template>
 
+        <!--
+        <template v-slot:body-cell-b_aktif="props">
+          <q-td :props="props">
+            <q-badge :color="props.row.b_aktif ? 'positive' : 'negative'">
+              {{ props.row.b_aktif ? 'Aktiff' : 'Non-Aktif' }}
+            </q-badge>
+          </q-td>
+        </template>
+        -->
         <template v-slot:body-cell-actions="props">
           <q-td :props="props" class="q-gutter-x-sm">
             <q-btn
@@ -363,8 +476,8 @@ onMounted(async () => {
         <div class="text-h6">{{ isEdit ? 'Edit Data Guru' : 'Tambah Data Guru Baru' }}</div>
       </q-card-section>
 
-      <q-card-section>
-        <q-form @submit.prevent="simpanData" class="q-gutter-md">
+      <q-card-section class="q-pa-sm">
+        <q-form @submit.prevent="simpanData" class="q-gutter-y-md">
           <div class="row q-col-gutter-md">
             <div class="col-12 col-md-6">
               <q-input v-model="form.c_guru_id" label="Kode Guru *" outlined dense required />
@@ -410,8 +523,8 @@ onMounted(async () => {
               <q-select
                 v-model="form.j_mapel_id"
                 :options="mapelOptions"
-                option-value="id_asli"
-                option-label="tampilan"
+                option-value="value"
+                option-label="label"
                 label="Mata Pelajaran"
                 emit-value
                 map-options

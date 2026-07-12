@@ -38,6 +38,7 @@ export default defineConfig((/* ctx */) => {
         browser: 'baseline-widely-available',
         node: 'node22',
       },
+      //publicPath: '/jurnal_kelas_2/', // Tambahkan nama repo Anda di sini
 
       vueRouterMode: 'hash', // available values: 'hash', 'history'
       // vueRouterBase,
@@ -96,6 +97,8 @@ export default defineConfig((/* ctx */) => {
       plugins: [
         'Dialog', // <-- Tambahkan kata ini
         'Notify', // <--- Tambahkan baris ini
+        'Dialog', // Dialog mungkin sudah ada karena $q.dialog Bapak berhasil jalan
+        'Loading', // <--- Tambahkan in
       ],
     },
 

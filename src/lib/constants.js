@@ -17,4 +17,6 @@ export const SET_HARI = [
   { label: 'Rabu', value: 3 },
   { label: 'Kamis', value: 4 },
   { label: 'Jumat', value: 5 },
+  { label: 'Sabtu', value: 6 },
+  { label: 'Ahad', value: 0 },
 ]
